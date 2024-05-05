@@ -78,6 +78,9 @@ bot.onText(/\/start/, (msg) => {
     // Check if the user already started the bot
     if (!startedUsers.includes(userId)) {
         startedUsers.push(userId);
+        bot.sendMessage(chatId, "Hello! Thanks for starting the bot.");
+    } else {
+        bot.sendMessage(chatId, "You've already started the bot.");
     }
 });
 
