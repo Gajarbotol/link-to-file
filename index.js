@@ -1,90 +1,61 @@
-const TelegramBot = require('node-telegram-bot-api');
+const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const fs = require('fs');
 
-// Replace 'YOUR_BOT_TOKEN' with your actual bot token
-const bot = new TelegramBot('7124287824:AAGcZUblRJ9-YWCWwPXnJhwGrv7a6kwObDo', { polling: true });
+const MAX_FILE_SIZE_MB = 20;
+const PORT = process.env.PORT || 3000; // Use the provided port or default to 3000
 
-// Define the allowed file extensions
-const allowedExtensions = ['apk', 'mp4', 'mp3', 'zip', 'jar', 'js', 'html', 'png', 'jpeg'];
+const bot = new Telegraf('7124287824:AAGcZUblRJ9-YWCWwPXnJhwGrv7a6kwObDo');
 
-// Maximum file size allowed in bytes (20 MB)
-const maxFileSize = 20 * 1024 * 1024;
-
-// Array to store users who started the bot
-let startedUsers = [];
-
-// Specify your specific chat ID
-const specificChatId = '5197344486';
-
-// Handle the download and sending of files
-bot.on('message', async (msg) => {
-    const chatId = msg.chat.id;
-    const messageText = msg.text;
-
-    // Check if the message contains a direct link to a file with allowed extensions
-    if (messageText && isUrl(messageText) && isAllowedExtension(messageText)) {
-        try {
-            // Get the file size
-            const response = await axios.head(messageText);
-            const fileSize = response.headers['content-length'];
-
-            // Check if the file size is within the limit
-            if (fileSize <= maxFileSize) {
-                // Download the file
-                const downloadResponse = await axios.get(messageText, { responseType: 'stream' });
-                const fileName = messageText.substring(messageText.lastIndexOf('/') + 1);
-                const filePath = `downloads/${fileName}`; // Change the "downloads" directory to your desired location
-                const writer = fs.createWriteStream(filePath);
-                downloadResponse.data.pipe(writer);
-
-                // Send the downloaded file back to the user
-                writer.on('finish', () => {
-                    bot.sendDocument(chatId, filePath).then(() => {
-                        // Delete the downloaded file from the server
-                        fs.unlinkSync(filePath);
-                    });
-                });
-            } else {
-                bot.sendMessage(chatId, "Sorry, the file exceeds the maximum size limit (20MB). Please send a smaller file.");
-            }
-        } catch (error) {
-            console.error(error);
-        }
-    }
+// Start command handler
+bot.start((ctx) => {
+  ctx.reply('Welcome to the file downloader bot! Send me a direct download link and I will download the file for you.');
 });
 
-// Function to check if a string is a URL
-function isUrl(string) {
+bot.on('message', async (ctx) => {
+  const message = ctx.message;
+  
+  // Check if the message contains a direct download link
+  if (message.text && message.text.startsWith('http')) {
     try {
-        new URL(string);
-        return true;
-    } catch (_) {
-        return false;
+      // Download the file
+      const response = await axios.get(message.text, { responseType: 'stream' });
+      
+      // Check file size
+      const contentLength = response.headers['content-length'];
+      const fileSizeMB = contentLength / (1024 * 1024); // Convert bytes to MB
+      
+      if (fileSizeMB > MAX_FILE_SIZE_MB) {
+        ctx.reply(`Sorry, the file size exceeds the limit of ${MAX_FILE_SIZE_MB} MB.`);
+        return;
+      }
+      
+      const fileName = `downloaded_file_${Date.now()}.pdf`; // Example: You can customize the file name
+      
+      // Create a writable stream and pipe the response data to it
+      const fileStream = fs.createWriteStream(fileName);
+      response.data.pipe(fileStream);
+      
+      // Wait for the file to finish downloading
+      await new Promise((resolve, reject) => {
+        fileStream.on('finish', resolve);
+        fileStream.on('error', reject);
+      });
+      
+      // Upload the file to the user who sent the link
+      await ctx.replyWithDocument({ source: fileName });
+      
+      // Delete the downloaded file from the server
+      fs.unlinkSync(fileName);
+      
+    } catch (error) {
+      console.error('Error:', error);
+      ctx.reply('Failed to download the file.');
     }
-}
-
-// Function to check if a file link has an allowed extension
-function isAllowedExtension(fileLink) {
-    const extension = fileLink.substring(fileLink.lastIndexOf('.') + 1).toLowerCase();
-    return allowedExtensions.includes(extension);
-}
-
-// Handle the start command
-bot.onText(/\/start/, (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    
-    // Check if the user already started the bot
-    if (!startedUsers.includes(userId)) {
-        startedUsers.push(userId);
-        bot.sendMessage(chatId, "Hello! Thanks for starting the bot.");
-    } else {
-        bot.sendMessage(chatId, "You've already started the bot.");
-    }
+  }
 });
 
-// Send the list of users who started the bot to the specified chat ID
-function sendUserList() {
-    bot.sendMessage(specificChatId, `List of users who started the bot: \n${startedUsers.join('\n')}`);
-}
+// Start listening on the specified port
+bot.startPolling(PORT, () => {
+  console.log(`Bot is running on port ${PORT}`);
+});
